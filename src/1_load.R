@@ -4,6 +4,9 @@ library(tidyverse)
 library(lubridate)
 library(ggmap)
 
-superk <- read.csv("data/raw/export_9.5.22.csv", header = T, na.strings = "")
+# Requires google API key for collection of postcode data from free text address field
+# Register google API key with register_google(key = "", write = TRUE)
+
+superk <- read.csv("data/raw/export_22.8.22.csv", header = T, na.strings = "")
 varnames <- readxl::read_xlsx("data/raw/superkneedata notes.xlsx", sheet = 1, na = "")
 

@@ -146,7 +146,7 @@ superkjoin <- bind_rows(mpre, m0) %>%
   rowwise() %>% # to calculate totals per participant
   mutate(across(starts_with("koos"), ~abs(.x - 4))) %>% # all the koos scales need to be flipped
   mutate(koos_s4 = abs(koos_s4 - 4), # koos_s4 and 5 have their scale correctin redcap (so need to flip back here)
-         koos_s5 = abs(koos_s4 - 4), 
+         koos_s5 = abs(koos_s5 - 4), 
          koos_p_total = 100 - (mean(c_across(matches("koos\\_p\\d+")), na.omit = TRUE) * 100) / 4, # formula for calculating koos subscale totals
          koos_s_total = 100 - (mean(c_across(matches("koos\\_s\\d+")), na.omit = TRUE) * 100) / 4,
          koos_a_total = 100 - (mean(c_across(matches("koos\\_a\\d+")), na.omit = TRUE) * 100) / 4,
@@ -156,13 +156,13 @@ superkjoin <- bind_rows(mpre, m0) %>%
          koos_4_total = mean(c(koos_p_total, koos_s_total, koos_sp_total, koos_q_total), na.omit = TRUE),
          aclqol_total = mean(c_across(matches("aclqol\\_\\d+")), na.rm = TRUE),
          pass = ifelse(!is.na(bl_pass), bl_pass, pass),
+         completed = date(ymd_hms(completed)),
          timepoint_actual = case_when( # calculate actual time between baseline and timepoint 
            timepoint == "mpre" ~ NA_real_,
            timepoint == "m0" ~ 0,
            !is.na(firstphysiosession_date) ~ round((firstphysiosession_date %--% completed) / weeks(1),2), # if randomised to physio group then base on first session
            TRUE ~ round((baseline_date %--% completed) / weeks(1),2) # else go from baseline lab date.
-         ),
-         completed = date(ymd_hms(completed))
+         )
            ) %>%
   ungroup() %>%
   select(!bl_pass)
