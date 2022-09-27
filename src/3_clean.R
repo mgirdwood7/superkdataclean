@@ -2,7 +2,8 @@
 
 superkedit <- superk
 
-consentedlist <- superkedit %>%
+# get list of consented participants
+consentedlist <- superkedit %>% 
   select(record_id, consent_tick) %>%
   group_by(record_id) %>%
   fill(consent_tick) %>%
@@ -32,7 +33,8 @@ superkedit <- superkedit %>%
            bl_birthcountry == 2 ~ bl_birthcountrytext
          ),
          bl_dominantleg = recode(bl_dominantleg, '1' = "Right", '2' = "Left"),
-         bl_aclrside = recode(bl_aclrside, '1' = "Left", '2' = "Right")
+         bl_aclrside = recode(bl_aclrside, '1' = "Left", '2' = "Right"),
+         bl_aclrside_demographic = recode(bl_aclrside_demographic, '1' = "Left", '2' = "Right")
          ) %>% # recode group variable
   group_by(id) %>%
   fill(dob, .direction = "down") %>%
@@ -135,6 +137,7 @@ superkjoin <- bind_rows(mpre, m0) %>%
   fill(age, .direction = "downup") %>%
   fill(bl_dominantleg, .direction = "down") %>%
   fill(bl_aclrside, .direction = "downup") %>%
+  fill(bl_aclrside_demographic, .direction = "downup") %>%
   fill(group, .direction = "downup") %>%
   fill(baseline_date, .direction = "downup") %>%
   fill(firstphysiosession_date, .direction = "downup") %>%
@@ -189,6 +192,8 @@ superkjoin <- superkjoin %>%
   select(!c(starts_with("l_"), starts_with("r_"))) %>% # remove side based data.
   rename(dominantleg = bl_dominantleg,
          aclrside = bl_aclrside) %>%
+  mutate(aclrside = case_when(is.na(aclrside) ~ bl_aclrside_demographic, TRUE ~ aclrside)) %>%
+  select(-bl_aclrside_demographic) %>%
   select(id, sex, age, dominantleg, aclrside, timepoint, timepoint_actual, baseline_date, firstphysiosession_date, completed, mridate, group, dob, postcode, starts_with("bl_"),
          starts_with("koos_"), starts_with("aclqol"), starts_with("tsk"), starts_with("nprs"), starts_with("pass"), starts_with("groc"), starts_with("hlq"), 
          starts_with("wlq"), starts_with("eq5d"), everything()) %>% # order variables
