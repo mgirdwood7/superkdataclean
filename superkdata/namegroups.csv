@@ -11,6 +11,7 @@ firstphysiosession_date,id
 completed,id
 group,id
 dob,id
+postcode,id
 bl_birthcountry,baseline
 bl_indeginous,baseline
 bl_aclrdate,baseline

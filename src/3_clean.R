@@ -28,13 +28,15 @@ superkedit <- superkedit %>%
            sex == 2 ~ "Female",
            sex == 3 ~ as.character(sex_other)
            ),
+         gender = recode(gender, '0' = "Man", "1" = "Woman", '2' = "Other", '3' = "Prefer not to say"),
          bl_birthcountry = case_when(
            bl_birthcountry == 1 ~ "Australia",
            bl_birthcountry == 2 ~ bl_birthcountrytext
          ),
          bl_dominantleg = recode(bl_dominantleg, '1' = "Right", '2' = "Left"),
          bl_aclrside = recode(bl_aclrside, '1' = "Left", '2' = "Right"),
-         bl_aclrside_demographic = recode(bl_aclrside_demographic, '1' = "Left", '2' = "Right")
+         bl_aclrside_demographic = recode(bl_aclrside_demographic, '1' = "Left", '2' = "Right"),
+         dominanthand = recode(dominanthand, '0' = "Left", '1' = "Right")
          ) %>% # recode group variable
   group_by(id) %>%
   fill(dob, .direction = "down") %>%
@@ -70,7 +72,7 @@ baseline <- c("prebaseline_questi_arm_1", "baseline_questionn_arm_1", "baseline_
               "randomisation_arm_1", "baseline_postrando_arm_1")
 fourmonth <- c("pre4_month_questio_arm_1", "4_month_questionna_arm_1", "4_month_testing_arm_1")
 eightmonth <- c("8_month_questionna_arm_1")
-twelvemonth <- c("pre12_month_questi_arm_1", "12_month_quesitonn_arm_1", "12_month_testing_arm_1")
+twelvemonth <- c("pre12_month_questi_arm_1", "12_month_questionn_arm_1", "12_month_testing_arm_1", "12_month_key_proms_arm_1")
 
 # Coalesce data into one row per participant
 
@@ -84,7 +86,9 @@ mpre <- superkedit %>%
   mutate(timepoint = "mpre")
 
 mpreto0 <- mpre %>% # move baseline questionnaire from pre to timepoint m0. 
-  select(id, bl_birthcountry:bl_pass)
+  select(id, completed_base, dob, bl_birthcountry:bl_pass) %>%
+  rename(completed_proms_mpre = completed_base,
+         dob_pre = dob)
 
 mpre <- mpre %>% # remove from timepoint mpre
   select(!bl_birthcountry:bl_pass)
@@ -95,10 +99,23 @@ m0 <- superkedit %>%
   summarise_all(coalesce_by_column) %>%
   ungroup() %>%
   select(!bl_birthcountry:bl_pass) %>% # remove blank columns to be replaced from mpre move
-  full_join(., mpreto0, by = "id") %>% # join baseline questionniare to m0 (full join as some mpre)
+  full_join(., mpreto0, by = "id") %>% # join baseline questionnaire to m0 (full join as some mpre)
   mutate(timepoint = "m0",
          baseline_date = date(completed_proms),
-         age = trunc((dob %--% baseline_date) / years(1))) 
+         dob = case_when(
+           is.na(dob) ~ dob_pre,
+           TRUE ~ dob
+         ),
+         completed_proms = case_when(
+           is.na(completed_proms) ~ completed_proms_mpre,
+           TRUE ~ completed_proms),
+         age = case_when(
+           !is.na(baseline_date) ~ trunc((dob %--% baseline_date) / years(1)),
+           TRUE ~ trunc((dob %--% completed_proms) / years(1))
+         )) %>%
+  filter(!is.na(completed_proms), # remove non respondents
+         completed_proms != "[not completed]") %>% # remove not fully completed responses
+  select(-c(completed_proms_mpre,dob_pre))
 
 m4 <- superkedit %>%
   filter(redcap_event_name %in% fourmonth) %>%
@@ -133,15 +150,7 @@ superkjoin <- bind_rows(mpre, m0) %>%
            is.na(completed_proms) & !is.na(completed_eq5d) ~ completed_eq5d
          )) %>%
   group_by(id) %>% # fill id variables for all timepoints
-  fill(sex, .direction = "down") %>%
-  fill(age, .direction = "downup") %>%
-  fill(bl_dominantleg, .direction = "down") %>%
-  fill(bl_aclrside, .direction = "downup") %>%
-  fill(bl_aclrside_demographic, .direction = "downup") %>%
-  fill(group, .direction = "downup") %>%
-  fill(baseline_date, .direction = "downup") %>%
-  fill(firstphysiosession_date, .direction = "downup") %>%
-  fill(dob, .direction = "downup") %>%
+  fill(c(sex, age, bl_dominantleg, bl_aclrside, bl_aclrside_demographic, group, baseline_date, firstphysiosession_date, dob, dominanthand), .direction = "downup") %>%
   fill(bl_dominantleg, .direction = "up") %>%
   ungroup() %>%
   select(!c(completed_base, completed_proms, completed_eq5d, completed_lab, redcap_event_name, redcap_survey_identifier, starts_with("koos"))) %>%
@@ -157,7 +166,7 @@ superkjoin <- bind_rows(mpre, m0) %>%
          koos_q_total = 100 - (mean(c_across(matches("koos\\_q\\d+")), na.omit = TRUE) * 100) / 4,
          koos_pf_total = 100 - (mean(c_across(matches("koos\\_pf\\d+")), na.omit = TRUE) * 100) / 4,
          koos_4_total = mean(c(koos_p_total, koos_s_total, koos_sp_total, koos_q_total), na.omit = TRUE),
-         aclqol_total = mean(c_across(matches("aclqol\\_\\d+")), na.rm = TRUE),
+         aclqol_total = mean(c_across(matches("aclqol\\_\\d+")), na.omit = TRUE),
          pass = ifelse(!is.na(bl_pass), bl_pass, pass),
          completed = date(ymd_hms(completed)),
          timepoint_actual = case_when( # calculate actual time between baseline and timepoint 
@@ -194,10 +203,10 @@ superkjoin <- superkjoin %>%
          aclrside = bl_aclrside) %>%
   mutate(aclrside = case_when(is.na(aclrside) ~ bl_aclrside_demographic, TRUE ~ aclrside)) %>%
   select(-bl_aclrside_demographic) %>%
-  select(id, sex, age, dominantleg, aclrside, timepoint, timepoint_actual, baseline_date, firstphysiosession_date, completed, mridate, group, dob, postcode, starts_with("bl_"),
+  select(id, sex, gender, age, dominantleg, dominanthand, aclrside, timepoint, timepoint_actual, baseline_date, firstphysiosession_date, completed, mridate, group, dob, postcode, starts_with("bl_"),
          starts_with("koos_"), starts_with("aclqol"), starts_with("tsk"), starts_with("nprs"), starts_with("pass"), starts_with("groc"), starts_with("hlq"), 
          starts_with("wlq"), starts_with("eq5d"), everything()) %>% # order variables
-  select(id, sex, age, dominantleg, aclrside, timepoint, timepoint_actual, baseline_date, firstphysiosession_date, completed, mridate, group, dob, postcode, 
+  select(id, sex, gender, age, dominantleg, dominanthand, aclrside, timepoint, timepoint_actual, baseline_date, firstphysiosession_date, completed, mridate, group, dob, postcode, 
          bl_birthcountry:bl_familyhxoadetails, bl_medicalhx:bl_otherpainconditions_otherdetails, everything()) %>% # shuffle order of bl_ questions
   arrange(id, timepoint)
 
@@ -272,12 +281,21 @@ fnmonthly <- fnmonthly %>%
   
 # Blind dataset - remove variables which give away allocation
 superkjoin <- superkjoin %>%
+  filter(!(is.na(completed) & is.na(koos_s1))) %>% # remove rows of missing data
   select(!any_of(c("firstphysiosession_date", "expect_tegner_4m", "expect_pain_4m", "expect_qol_4m", "adherence_selfrated", "treatment_satisfaction",
                  contains("blgoals"))))
 
 # Save database
 write_csv(superkjoin, "data/processed/SUPERK Database.csv")
 write_csv(fnmonthly, "data/processed/SUPERK Fortnightly.csv")
-  
+
+# Export
+# writing multiple sheets together
+
+library(openxlsx)
+openxlsx_setOp("dateFormat", value = "yyyy-mm-dd") # set date format for openxlsx to write in iso format
+sheets <- list("SUPERK Database" = superkjoin, "SUPERK Fortnightly" = fnmonthly) # list of different excel sheets
+write.xlsx(sheets, "data/processed/SUPERK Database.xlsx", keepNA = TRUE, na.string = "NA") # write to xlsx file with 2 sheets.
+
 
   
