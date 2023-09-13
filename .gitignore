@@ -3,7 +3,9 @@
 .Rapp.history
 
 # Patient Data files
+/*.csv
 /data/raw/*.csv
+/data/raw/*.xlsx
 /data/processed/*.csv
 /data/processed/*.xlsx
 

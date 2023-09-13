@@ -40,6 +40,7 @@ superkedit <- superkedit %>%
          ) %>% # recode group variable
   group_by(id) %>%
   fill(dob, .direction = "down") %>%
+  fill(gender, .direction = "updown") %>%
   ungroup() %>%
   select(!matches("timestamp|complete$|sex_other|bl_birthcountrytext")) %>% # remove un-needed redcap fields 
   select(!any_of( # remove predetermined variables
@@ -63,8 +64,44 @@ superkedit <- superkedit %>%
 fnmonthly <- superkedit %>%
   select(id, redcap_event_name, starts_with("fn_"), starts_with("mth_"))
 
+# Get surgical details informaiton
+sxdetails <- superkedit %>%
+  select(id, starts_with("sx_")) %>%
+  filter(!is.na(sx_name)) %>% # remove blank rows
+  mutate(sx_primary = recode(sx_primary, "1" = "Primary", "2" = "Revision", "3" = "Unknown"), # recoding information
+         sx_side = recode(sx_side, "1" = "Left", "2" = "Right"),
+         sx_graft = recode(sx_graft, "1" = "Hamstring",
+                           "2" = "Quadriceps", 
+                           "3" = "Patellar Tendon (BPTB)", 
+                           "4" = "Allograft", 
+                           "5" = "Other", 
+                           "6" = "Unknown"),
+         sx_graft = case_when(sx_graft == "Other" ~ sx_graft_other,
+                              TRUE ~ sx_graft),
+         sx_graftside = recode(sx_graftside, "1" = "Ipsilateral",
+                               "2" = "Contralateral",
+                               "3" = "Allograft (n/a)",
+                               "4" = "Unknown")) %>%
+  mutate(across(c(sx_meniscus_med, sx_meniscus_lat), ~recode(.x, 
+                                                             "1" = "None reported", 
+                                                             "2" = "Meniscectomy",
+                                                             "3" = "Repair",
+                                                             "4" = "Tear untreated",
+                                                             "5" = "Other"))) %>%
+  mutate(sx_meniscus_med = case_when(sx_meniscus_med == "Other" ~ sx_meniscus_med_other, TRUE ~ sx_meniscus_med),
+         sx_meniscus_lat = case_when(sx_meniscus_lat == "Other" ~ sx_meniscus_lat_other, TRUE ~ sx_meniscus_lat),
+         sx_cartilage_int = recode(sx_cartilage_int, "0" = "None reported", "1" = "Autologous Cartilage Implantation", 
+                                   "2" = "Micro-fracture surgery", "3" = "Cartilage debridgement", "4" = "Other"),
+         sx_cartilage_int = case_when(sx_cartilage_int == "Other" ~ sx_cartilage_int_other, TRUE ~ sx_cartilage_int)) %>%
+  mutate(across(c(sx_patellacartilage:sx_femoralcartilage_lat), ~recode(.x, "1" = "Not reported", 
+                                                                    "2" = "Grade 0", 
+                                                                    "3" = "Grade 1", 
+                                                                    "4" = "Grade 2",
+                                                                    "5" = "Grade 3"))) %>%
+  select(-c(sx_graft_other, sx_meniscus_med_other, sx_meniscus_lat_other, sx_cartilage_int_other)) # remove "other" variables not needed now
+
 superkedit <- superkedit %>%
-  select(!c(starts_with("fn_"), starts_with("mth_")))
+  select(!c(starts_with("fn_"), starts_with("mth_"), starts_with("sx_")))
 
 # List of redcap arms for each timepoint
 prebaseline <- c("online_consent_and_arm_1", "participant_regist_arm_1")
@@ -72,7 +109,9 @@ baseline <- c("prebaseline_questi_arm_1", "baseline_questionn_arm_1", "baseline_
               "randomisation_arm_1", "baseline_postrando_arm_1")
 fourmonth <- c("pre4_month_questio_arm_1", "4_month_questionna_arm_1", "4_month_testing_arm_1")
 eightmonth <- c("8_month_questionna_arm_1")
-twelvemonth <- c("pre12_month_questi_arm_1", "12_month_questionn_arm_1", "12_month_testing_arm_1", "12_month_key_proms_arm_1")
+twelvemonth <- c("pre12_month_questi_arm_1", "12_month_questionn_arm_1", "12_month_testing_arm_1")
+fourmonth_extra <- c("covid_interum_4_mo_arm_1")
+twelvemonth_extra <- c("12_month_key_proms_arm_1")
 
 # Coalesce data into one row per participant
 
@@ -124,6 +163,29 @@ m4 <- superkedit %>%
   ungroup() %>%
   mutate(timepoint = "m4")
 
+# those that completed 4 month proms extra/separate from main section
+m4extra <- superkedit %>%
+  filter(redcap_event_name %in% fourmonth_extra) %>%
+  group_by(id) %>%
+  summarise_all(coalesce_by_column) %>%
+  ungroup() %>%
+  mutate(timepoint = "m4") %>%
+  select(-starts_with("koos")) %>% # remove these variables (empty anyway)
+  #rename_at(vars(starts_with("pfoos")), ~str_replace(., "pfoos", "koos")) %>%
+  discard(~all(is.na(.)))
+
+# Adding in those that completed their 4 month proms separately or early
+m4extra_join <- bind_rows(m4 %>% select(variable.names(m4extra)), m4extra) %>% # only take the variables that are duplicated
+  arrange(id, completed_proms) %>%
+  group_by(id) %>%
+  slice(1) %>% # take the earliest entry (i.e. will be closest to timepoint.)
+  ungroup()
+
+# join everything back together
+m4join <- left_join(m4 %>% select(-variable.names(m4extra)[-1]), # remove all the duplicated data (but keep id column ([-1]))
+                    m4extra_join,
+                    by = "id")
+
 m8 <- superkedit %>%
   filter(redcap_event_name %in% eightmonth) %>%
   group_by(id) %>%
@@ -138,11 +200,33 @@ m12 <- superkedit %>%
   ungroup() %>%
   mutate(timepoint = "m12")
 
+
+m12extra <- superkedit %>%
+  filter(redcap_event_name %in% twelvemonth_extra) %>%
+  group_by(id) %>%
+  summarise_all(coalesce_by_column) %>%
+  ungroup() %>%
+  mutate(timepoint = "m12") %>%
+  select(-starts_with("koos")) %>%
+  #rename_at(vars(starts_with("pfoos")), ~str_replace(., "pfoos", "koos")) %>%
+  discard(~all(is.na(.)))
+
+# Adding in those that compelted their 4 month proms separately or early
+m12extra_join <- bind_rows(m12 %>% select(variable.names(m12extra)), m12extra) %>% # only take the variables that are duplicated
+  arrange(id, completed_proms) %>%
+  group_by(id) %>%
+  slice(1) %>% # take the earliest entry (i.e. will be closest to timepoint.)
+  ungroup()
+
+m12join <- left_join(m12 %>% select(-variable.names(m12extra)[-1]), # remove all the duplicated data (but keep id column ([-1]))
+                    m12extra_join,
+                    by = "id")
+
 # Join together timepoints
 superkjoin <- bind_rows(mpre, m0) %>%
-  bind_rows(., m4) %>%
+  bind_rows(., m4join) %>%
   bind_rows(., m8) %>%
-  bind_rows(., m12) %>%
+  bind_rows(., m12join) %>%
   mutate(timepoint = factor(timepoint, levels = c("mpre" = "mpre", "m0" = "m0", "m4" = "m4", "m8" = "m8", "m12" = "m12")), # order timepoint
          completed = case_when( # compute date of completion of data
            !is.na(completed_base) ~ completed_base,
@@ -294,8 +378,8 @@ write_csv(fnmonthly, "data/processed/SUPERK Fortnightly.csv")
 
 library(openxlsx)
 openxlsx_setOp("dateFormat", value = "yyyy-mm-dd") # set date format for openxlsx to write in iso format
-sheets <- list("SUPERK Database" = superkjoin, "SUPERK Fortnightly" = fnmonthly) # list of different excel sheets
-write.xlsx(sheets, "data/processed/SUPERK Database.xlsx", keepNA = TRUE, na.string = "NA") # write to xlsx file with 2 sheets.
+sheets <- list("SUPERK Database" = superkjoin, "SUPERK Fortnightly" = fnmonthly, "Surgical Details" = sxdetails) # list of different excel sheets
+write.xlsx(sheets, "data/processed/SUPERK Database.xlsx", keepNA = TRUE, na.string = "NA") # write to xlsx file with 3 sheets.
 
 
   
