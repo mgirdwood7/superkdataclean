@@ -1,8 +1,6 @@
 
 
-bl_otherkneeinjsurg	bl_medhist_done	bl_medication_done
-
-medhx <- super_knee_med_history_data_coding
+medhx <- read_csv("data/raw/medhist_clean.csv")
 
 medhx <- medhx %>%
   select(id, bl_medhist_done, bl_medication_done) %>%

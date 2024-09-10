@@ -153,8 +153,9 @@ server <- function(input, output) {
   dataout <- reactive({
     data() %>%
       dplyr::filter(timepoint %in% input$timepoints) %>%
-      dplyr::select(id, sex, gender, age, dominantleg, dominanthand, aclrside, timepoint, timepoint_actual, baseline_date, 
-                    completed, group, dob, postcode, any_of(namesout()$varname))
+      dplyr::select(id, sex, gender, age, dominantleg, dominanthand, aclrside, aclrgraft, aclrside_revision,
+                    left_aclr_no, right_aclr_no, timepoint, timepoint_actual, baseline_date, 
+                    completed, mridate, group, dob, postcode, yearssinceaclr, any_of(namesout()$varname))
     # need to add firstphysiosession_date back here one add unblinded back.  
   })
   

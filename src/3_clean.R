@@ -47,6 +47,30 @@ superkedit <- superkedit %>%
     varnames %>% filter(remove == "remove") %>% select(newname) %>% unlist() %>% as.character()
     ))
 
+superkedit <- superkedit %>%
+  mutate(sx_graft = case_match(sx_graft, # recode graft
+                               1 ~ "Hamstring",
+                               2 ~ "Quadriceps",
+                               3 ~ "BPTB",
+                               4 ~ "Allograft",
+                               5 ~ "Other",
+                               6 ~ "Unknown")
+  ) %>%
+  mutate(sx_graft = case_when( # use "other" field if other selected
+    sx_graft == "Other" ~ sx_graft_other,
+    TRUE ~ sx_graft)) %>%
+  rowwise() %>%
+  mutate(aclrgraft = case_when( # add contralateral to graft type if selected.
+    sx_graftside == 2 ~ paste("Contralateral", sx_graft),
+    TRUE ~ sx_graft)) %>%
+  ungroup() %>%
+  group_by(id) %>%
+  fill(aclrgraft, .direction = "downup") %>%
+  ungroup() %>%
+  select(-c(bl_grafttype, bl_graftother, bl_graftwhichknee, bl_graftwherefrom, bl_aclsurgeon, bl_aclhospital,
+            bl_aclrnumber, bl_aclrhistory))
+  
+
 # extract postcode data
 postcode <- superkedit %>%
   select(id, address_res) %>%
@@ -98,15 +122,30 @@ sxdetails <- superkedit %>%
                                                                     "3" = "Grade 1", 
                                                                     "4" = "Grade 2",
                                                                     "5" = "Grade 3"))) %>%
-  select(-c(sx_graft_other, sx_meniscus_med_other, sx_meniscus_lat_other, sx_cartilage_int_other)) # remove "other" variables not needed now
+  select(-c(sx_graft_other, sx_meniscus_med_other, sx_meniscus_lat_other, sx_cartilage_int_other)) %>%  # remove "other" variables not needed now
+  mutate(across(c(sx_patellacartilage:sx_femoralcartilage_lat), ~factor(.x, levels = c("Not reported", "Grade 0", "Grade 1", "Grade 2", "Grade 3")))) %>%
+  mutate(concomitant_inj = case_when(
+    as.numeric(sx_patellacartilage) > 2 | as.numeric(sx_trochleacartilage) > 2 | as.numeric(sx_tibialcartilage_med) > 2 | 
+      as.numeric(sx_tibialcartilage_lat) > 2 | as.numeric(sx_femoralcartilage_med) > 2 | 
+      as.numeric(sx_femoralcartilage_lat) > 2 | sx_cartilage_int != "None reported" |
+      sx_meniscus_med != "None reported" | sx_meniscus_lat!= "None reported" ~ 1,
+    TRUE ~ 0
+  )) %>%
+  mutate(concomitant_inj = case_when(
+    id %in% c(1202, 1253, 1283) ~ 1, # these need to be manually added as concomitant injury due to notes in the sx section.
+    TRUE ~ concomitant_inj
+  ))
 
 superkedit <- superkedit %>%
-  select(!c(starts_with("fn_"), starts_with("mth_"), starts_with("sx_")))
+  select(!c(starts_with("fn_"), starts_with("mth_"), starts_with("sx_"))) %>%
+  select(-c(bl_otherkneeinj, bl_otherkneeinjdet, bl_medicationyn, bl_medicationdetails, bl_medicalhx, bl_otherkneeinjdetails,
+            bl_otherinj, bl_otherinjdetails, bl_otherpainconditions_none, bl_aclcontralatknee, bl_otherkneeinj_withresearcher, bl_otherpainconditions_otherdetails)) # medical history variables that will be replaced with cleaned variables
 
 # List of redcap arms for each timepoint
 prebaseline <- c("online_consent_and_arm_1", "participant_regist_arm_1")
 baseline <- c("prebaseline_questi_arm_1", "baseline_questionn_arm_1", "baseline_testing_arm_1",
               "randomisation_arm_1", "baseline_postrando_arm_1")
+eightweek <- c("8_week_questionnai_arm_1")
 fourmonth <- c("pre4_month_questio_arm_1", "4_month_questionna_arm_1", "4_month_testing_arm_1")
 eightmonth <- c("8_month_questionna_arm_1")
 twelvemonth <- c("pre12_month_questi_arm_1", "12_month_questionn_arm_1", "12_month_testing_arm_1")
@@ -139,6 +178,8 @@ m0 <- superkedit %>%
   ungroup() %>%
   select(!bl_birthcountry:bl_pass) %>% # remove blank columns to be replaced from mpre move
   full_join(., mpreto0, by = "id") %>% # join baseline questionnaire to m0 (full join as some mpre)
+  left_join(., medhx, by = "id") %>%
+  left_join(., aclr_details, by = "id") %>%
   mutate(timepoint = "m0",
          baseline_date = date(completed_proms),
          dob = case_when(
@@ -155,6 +196,13 @@ m0 <- superkedit %>%
   filter(!is.na(completed_proms), # remove non respondents
          completed_proms != "[not completed]") %>% # remove not fully completed responses
   select(-c(completed_proms_mpre,dob_pre))
+
+m2 <- superkedit %>%
+  filter(redcap_event_name %in% eightweek) %>%
+  group_by(id) %>%
+  summarise_all(coalesce_by_column) %>%
+  ungroup() %>%
+  mutate(timepoint = "m2")
 
 m4 <- superkedit %>%
   filter(redcap_event_name %in% fourmonth) %>%
@@ -224,17 +272,24 @@ m12join <- left_join(m12 %>% select(-variable.names(m12extra)[-1]), # remove all
 
 # Join together timepoints
 superkjoin <- bind_rows(mpre, m0) %>%
+  bind_rows(., m2) %>%
   bind_rows(., m4join) %>%
   bind_rows(., m8) %>%
   bind_rows(., m12join) %>%
-  mutate(timepoint = factor(timepoint, levels = c("mpre" = "mpre", "m0" = "m0", "m4" = "m4", "m8" = "m8", "m12" = "m12")), # order timepoint
+  mutate(timepoint = factor(timepoint, levels = c("mpre" = "mpre", "m0" = "m0", "m2" = "m2", "m4" = "m4", "m8" = "m8", "m12" = "m12")), # order timepoint
          completed = case_when( # compute date of completion of data
            !is.na(completed_base) ~ completed_base,
            !is.na(completed_proms) ~ completed_proms,
            is.na(completed_proms) & !is.na(completed_eq5d) ~ completed_eq5d
          )) %>%
+  mutate(aclr_satisfaction = case_when( # combine the two times we ask satisfaction. Preference the 2nd time which is asked during treatment response.
+    is.na(aclr_satisfaction2) ~ aclr_satisfaction1,
+    TRUE ~ aclr_satisfaction2
+  )) %>%
+  select(-c(aclr_satisfaction1, aclr_satisfaction2)) %>%
+  mutate(bl_surgicaldelay = bl_rupturedate %--% bl_aclrdate / days(1)) %>%
   group_by(id) %>% # fill id variables for all timepoints
-  fill(c(sex, age, bl_dominantleg, bl_aclrside, bl_aclrside_demographic, group, baseline_date, firstphysiosession_date, dob, dominanthand), .direction = "downup") %>%
+  fill(c(sex, age, bl_dominantleg, bl_aclrside, bl_aclrside_demographic, group, baseline_date, firstphysiosession_date, dob, dominanthand, l_aclr_no, r_aclr_no, aclrside_revision), .direction = "downup") %>%
   fill(bl_dominantleg, .direction = "up") %>%
   ungroup() %>%
   select(!c(completed_base, completed_proms, completed_eq5d, completed_lab, redcap_event_name, redcap_survey_identifier, starts_with("koos"))) %>%
@@ -260,39 +315,58 @@ superkjoin <- bind_rows(mpre, m0) %>%
            TRUE ~ round((baseline_date %--% completed) / weeks(1),2) # else go from baseline lab date.
          )
            ) %>%
+  mutate(across(c(eq5d_mobility, eq5d_selfcare, eq5d_adl, eq5d_pain, eq5d_anxdep), ~.x + 1)) %>% # add one to eq5d scores so range 1-5 (currently 0-4)
+  rename(eq_mob = eq5d_mobility,
+         eq_care = eq5d_selfcare,
+         eq_act = eq5d_adl,
+         eq_pain = eq5d_pain,
+         eq_dep = eq5d_anxdep,
+         eq_vas = eq5d_vas) %>%
   ungroup() %>%
   select(!bl_pass)
+
+# get time since aclr in years
+superkdate <- superkjoin %>%
+    filter(timepoint == "m0") %>%
+    mutate(yearssinceaclr = bl_aclrdate %--% baseline_date / years(1)) %>%
+    select(id, yearssinceaclr)
 
 # Convert L and R data to side based
 superkside <- superkjoin %>%
   select(id, timepoint, bl_aclrside, starts_with("l_"), starts_with("r_")) %>% # select variables with a side
-  pivot_longer(-c(id, timepoint, bl_aclrside), names_to = c("side", "var"),
+  pivot_longer(-c(id, timepoint, bl_aclrside, l_aclr_no, r_aclr_no), names_to = c("side", "var"),
               names_pattern = "(\\w)\\_(.+)", # split names to side and var 
               values_to = "value", values_transform = list(value = as.character)) %>% # mix of types so need to use values_transform
-  mutate(side = recode(side, "l" = "Left", "r" = "Right"), # apportion a (affected) and c (contralateral)
+  mutate(side = recode(side, "l" = "Left", "r" = "Right"), # app ortion a (affected) and c (contralateral)
          newvar = case_when(
            bl_aclrside == side ~ paste0("a_", var),
            bl_aclrside != side ~ paste0("c_", var),
          )) %>%
   select(!c(var, side)) %>%
   filter(!is.na(newvar)) %>% # remove rows where no data (e.g. no sided data yet)
-  pivot_wider(c(id, timepoint, bl_aclrside), names_from = "newvar", values_from = "value")
+  pivot_wider(id_cols = c(id, timepoint, bl_aclrside, l_aclr_no, r_aclr_no), names_from = "newvar", values_from = "value") %>%
+  rename(left_aclr_no = l_aclr_no,
+         right_aclr_no = r_aclr_no)
 
 # Join everything back together again
 superkjoin <- superkjoin %>%
   left_join(., superkside, by = c("id", "timepoint", "bl_aclrside")) %>%
   left_join(., postcode %>% select(id, postcode), by = "id") %>%
+  left_join(., superkdate, by = "id") %>%
+  left_join(., sxdetails %>% select(id, concomitant_inj), by = "id") %>%
   select(!c(starts_with("l_"), starts_with("r_"))) %>% # remove side based data.
   rename(dominantleg = bl_dominantleg,
          aclrside = bl_aclrside) %>%
   mutate(aclrside = case_when(is.na(aclrside) ~ bl_aclrside_demographic, TRUE ~ aclrside)) %>%
   select(-bl_aclrside_demographic) %>%
-  select(id, sex, gender, age, dominantleg, dominanthand, aclrside, timepoint, timepoint_actual, baseline_date, firstphysiosession_date, completed, mridate, group, dob, postcode, starts_with("bl_"),
+  select(id, sex, gender, age, dominantleg, dominanthand, aclrside, aclrgraft, aclrside_revision, left_aclr_no, right_aclr_no, concomitant_inj,  timepoint, timepoint_actual, baseline_date, firstphysiosession_date, completed, mridate, group, dob, postcode, yearssinceaclr, starts_with("bl_"),
          starts_with("koos_"), starts_with("aclqol"), starts_with("tsk"), starts_with("nprs"), starts_with("pass"), starts_with("groc"), starts_with("hlq"), 
-         starts_with("wlq"), starts_with("eq5d"), everything()) %>% # order variables
-  select(id, sex, gender, age, dominantleg, dominanthand, aclrside, timepoint, timepoint_actual, baseline_date, firstphysiosession_date, completed, mridate, group, dob, postcode, 
-         bl_birthcountry:bl_familyhxoadetails, bl_medicalhx:bl_otherpainconditions_otherdetails, everything()) %>% # shuffle order of bl_ questions
+         starts_with("wlq"), starts_with("eq_"), everything()) %>% # order variables
+  select(id, sex, gender, age, dominantleg, dominanthand, aclrside, aclrgraft, aclrside_revision, left_aclr_no, right_aclr_no,  concomitant_inj, timepoint, timepoint_actual, baseline_date, firstphysiosession_date, completed, mridate, group, dob, postcode, yearssinceaclr,
+         bl_birthcountry:bl_rupturedate, bl_surgicaldelay, bl_rupturesport, bl_familyhxoadetails, starts_with("bl_"), everything()) %>% # shuffle order of bl_ questions
   arrange(id, timepoint)
+
+
 
 # Fortnightly and Monthly Questions
 
@@ -302,6 +376,7 @@ fnmonthly <- fnmonthly %>%
   rowwise() %>%
   mutate(timepoint = case_when(
             str_detect(redcap_event_name, "week") ~ paste0("w", str_extract(redcap_event_name, "\\d{1,2}")),
+            str_detect(redcap_event_name, "pre4_month_question") ~ "w16", # week 16 fortnightly is actually in the pre-4month section
             str_detect(redcap_event_name, "month") ~ paste0("m", str_extract(redcap_event_name, "\\d{1,2}"))
              ),
          completed = case_when(
@@ -369,9 +444,13 @@ superkjoin <- superkjoin %>%
   select(!any_of(c("firstphysiosession_date", "expect_tegner_4m", "expect_pain_4m", "expect_qol_4m", "adherence_selfrated", "treatment_satisfaction",
                  contains("blgoals"))))
 
-# Save database
-write_csv(superkjoin, "data/processed/SUPERK Database.csv")
-write_csv(fnmonthly, "data/processed/SUPERK Fortnightly.csv")
+# remove data from after 12 month for now
+superkjoin <- superkjoin %>%
+  select(-c(starts_with("y2_"), starts_with("kessler")))
+
+# Save database - old version
+# write_csv(superkjoin, "data/processed/SUPERK Database.csv")
+# write_csv(fnmonthly, "data/processed/SUPERK Fortnightly.csv")
 
 # Export
 # writing multiple sheets together
@@ -381,5 +460,8 @@ openxlsx_setOp("dateFormat", value = "yyyy-mm-dd") # set date format for openxls
 sheets <- list("SUPERK Database" = superkjoin, "SUPERK Fortnightly" = fnmonthly, "Surgical Details" = sxdetails) # list of different excel sheets
 write.xlsx(sheets, "data/processed/SUPERK Database.xlsx", keepNA = TRUE, na.string = "NA") # write to xlsx file with 3 sheets.
 
+# Make file read only
+file_path <- "data/processed/SUPERK Database.xlsx"
+Sys.chmod(file_path, "444")
 
   
