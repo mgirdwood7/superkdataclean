@@ -47,6 +47,7 @@ superkedit <- superkedit %>%
     varnames %>% filter(remove == "remove") %>% select(newname) %>% unlist() %>% as.character()
     ))
 
+
 superkedit <- superkedit %>%
   mutate(sx_graft = case_match(sx_graft, # recode graft
                                1 ~ "Hamstring",
@@ -56,6 +57,11 @@ superkedit <- superkedit %>%
                                5 ~ "Other",
                                6 ~ "Unknown")
   ) %>%
+  mutate(bl_grafttype = case_match(bl_grafttype, # this is the manually entered researcher one, need for some which have no info in surgeon reports
+                                   1 ~ "Hamstring", 
+                                   2 ~ "BPTB",
+                                   3 ~ "Quadriceps",
+                                   4 ~ "Other")) %>%
   mutate(sx_graft = case_when( # use "other" field if other selected
     sx_graft == "Other" ~ sx_graft_other,
     TRUE ~ sx_graft)) %>%
@@ -64,6 +70,14 @@ superkedit <- superkedit %>%
     sx_graftside == 2 ~ paste("Contralateral", sx_graft),
     TRUE ~ sx_graft)) %>%
   ungroup() %>%
+  group_by(id) %>%
+  fill(aclrgraft, .direction = "downup") %>%
+  ungroup() %>%
+  mutate(aclrgraft = case_when( # for those that have no info in the surgeon report, need to use the manual enterred one (based on recall)
+    is.na(aclrgraft) ~ bl_grafttype,
+    aclrgraft == "tibialis anterior allograft" ~ "Allograft",
+    TRUE ~ aclrgraft
+  )) %>%
   group_by(id) %>%
   fill(aclrgraft, .direction = "downup") %>%
   ungroup() %>%
@@ -355,6 +369,7 @@ superkjoin <- superkjoin %>%
   left_join(., superkdate, by = "id") %>%
   left_join(., sxdetails %>% select(id, concomitant_inj), by = "id") %>%
   select(!c(starts_with("l_"), starts_with("r_"))) %>% # remove side based data.
+  select(-c(bl_concurrent, bl_concurrentdetails)) %>% # remove data now summarised in concomitant inj variable
   rename(dominantleg = bl_dominantleg,
          aclrside = bl_aclrside) %>%
   mutate(aclrside = case_when(is.na(aclrside) ~ bl_aclrside_demographic, TRUE ~ aclrside)) %>%
@@ -442,7 +457,9 @@ fnmonthly <- fnmonthly %>%
 superkjoin <- superkjoin %>%
   filter(!(is.na(completed) & is.na(koos_s1))) %>% # remove rows of missing data
   select(!any_of(c("firstphysiosession_date", "expect_tegner_4m", "expect_pain_4m", "expect_qol_4m", "adherence_selfrated", "treatment_satisfaction",
-                 contains("blgoals"))))
+                 contains("blgoals")))) %>%
+  mutate(mridate = date(mridate),
+         dob = date(dob))
 
 # remove data from after 12 month for now
 superkjoin <- superkjoin %>%
@@ -455,9 +472,12 @@ superkjoin <- superkjoin %>%
 # Export
 # writing multiple sheets together
 
+ae <- readxl::read_xlsx("data/processed/superknee_ae.xlsx", sheet = 1, na = "")
+mridata <- read_csv("data/raw/mridata.csv")
+
 library(openxlsx)
 openxlsx_setOp("dateFormat", value = "yyyy-mm-dd") # set date format for openxlsx to write in iso format
-sheets <- list("SUPERK Database" = superkjoin, "SUPERK Fortnightly" = fnmonthly, "Surgical Details" = sxdetails) # list of different excel sheets
+sheets <- list("SUPERK Database" = superkjoin, "SUPERK Fortnightly" = fnmonthly, "Surgical Details" = sxdetails, "Adverse Events" = ae, "MRI Data" = mridata) # list of different excel sheets
 write.xlsx(sheets, "data/processed/SUPERK Database.xlsx", keepNA = TRUE, na.string = "NA") # write to xlsx file with 3 sheets.
 
 # Make file read only
